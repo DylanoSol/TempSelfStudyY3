@@ -28,18 +28,28 @@ void ProcessDataset(std::span<int> set, int& sum)
 	}
 }
 
-int BigOperation()
+
+std::vector<std::array<int, DATASET_SIZE>> GenerateDatasets()
 {
-	Timer timer; 
-	std::minstd_rand randomNumberEngine; 
-	std::vector<std::array<int, DATASET_SIZE>> datasets{4}; 
-	std::vector<std::thread> workers; 
+	std::minstd_rand randomNumberEngine;
+	std::vector<std::array<int, DATASET_SIZE>> datasets{4};
 
 	for (auto& arr : datasets)
 	{
 		//Generate random ranges. Just make this long
-		std::ranges::generate(arr, randomNumberEngine); 
+		std::ranges::generate(arr, randomNumberEngine);
 	}
+
+	return datasets; 
+}
+
+int BigOperation()
+{
+	auto datasets = GenerateDatasets(); 
+
+	Timer timer; 
+	std::vector<std::thread> workers; 
+
 
 	struct Value
 	{
@@ -68,7 +78,47 @@ int BigOperation()
 	return 0; 
 }
 
+int SmallOperation()
+{
+	
+
+
+	struct Value
+	{
+		int v; //4 byte data type
+		char padding[60]; //60 bytes to add up to 64 bytes. 
+	};
+
+	Value sum[4] = { 0, 0, 0, 0 };
+
+	Timer timer;
+	timer.StartTimer();
+
+	auto datasets = GenerateDatasets(); 
+
+	int grandTotal = 0; 
+	std::vector<std::jthread> workers;
+	constexpr const auto subsetSize = DATASET_SIZE;
+	for (size_t i = 0; i < DATASET_SIZE; i += subsetSize)
+	{
+		for (size_t j = 0; j < 4; j++)
+		{
+			workers.push_back(std::jthread{ProcessDataset, std::span{&datasets[j][i], subsetSize}, std::ref(sum[j].v)});
+		}
+		workers.clear(); //Destroy the threads. 
+		grandTotal = sum[0].v + sum[1].v + sum[2].v + sum[3].v; 
+	}
+
+	float timeElapsed = timer.GetTime();
+	printf("%f milliseconds \n", timeElapsed);
+	printf("%d sum \n", grandTotal);
+
+	return 0; 
+}
+
 int main(int argc, char** argv)
 {
-	return BigOperation(); 
+	
+	return SmallOperation(); 
+	//return BigOperation(); 
 }
