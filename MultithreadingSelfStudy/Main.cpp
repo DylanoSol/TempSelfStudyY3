@@ -6,12 +6,13 @@
 #include <limits>
 #include <thread>
 #include <mutex>
+#include <span>
 #include "Timer.h"
 
 //Following along with video tutorial series by ChiliTomatoNoodle
-constexpr size_t DATASET_SIZE = 5000000; 
+constexpr size_t DATASET_SIZE = 50000000; 
 
-void ProcessDataset(std::array<int, DATASET_SIZE>& set, int& sum)
+void ProcessDataset(std::span<int> set, int& sum)
 {
 	for (int x : set)
 	{
@@ -27,7 +28,7 @@ void ProcessDataset(std::array<int, DATASET_SIZE>& set, int& sum)
 	}
 }
 
-int main()
+int BigOperation()
 {
 	Timer timer; 
 	std::minstd_rand randomNumberEngine; 
@@ -52,7 +53,7 @@ int main()
 
 	for (size_t i = 0; i < 4; i++)
 	{
-		workers.push_back(std::thread{ProcessDataset, std::ref(datasets[i]), std::ref(sum[i].v)});
+		workers.push_back(std::thread{ProcessDataset, std::span{datasets[i]}, std::ref(sum[i].v)});
 	}
 
 	for (auto& w : workers)
@@ -67,3 +68,7 @@ int main()
 	return 0; 
 }
 
+int main(int argc, char** argv)
+{
+	return BigOperation(); 
+}
