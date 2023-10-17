@@ -7,51 +7,71 @@
 #include <thread>
 #include <mutex>
 #include <span>
+#include <algorithm>
+#include <numeric>
 #include "Timer.h"
 
-void ProcessDataset(std::span<int> set, int& sum)
+//Settings for now
+constexpr size_t WORKER_COUNT = 4; 
+constexpr size_t CHUNK_SIZE = 100;
+constexpr size_t CHUNK_COUNT = 100;
+constexpr size_t SUBSET_SIZE = CHUNK_SIZE / WORKER_COUNT; 
+constexpr size_t LIGHT_ITERATIONS = 100;
+constexpr size_t HEAVY_ITERATIONS = 1000;
+constexpr double ProbabilityHeavy = .02; 
+
+static_assert(CHUNK_SIZE >= WORKER_COUNT); 
+static_assert(CHUNK_SIZE % WORKER_COUNT == 0);
+
+struct Task
 {
-	for (int x : set)
+	unsigned int val; 
+	bool heavy; 
+	unsigned int Process() const
 	{
-		//1 thread locks the mutex. 
-
-		//Random heavy math operation. There just needs to be work. 
-		constexpr auto limit = (double)std::numeric_limits<int>::max();
-		const auto y = (double)x / limit;
-		sum += int(std::sin(std::cos(y)) * limit);
-
-		//Same thread unlocks the mutex. 
-
+		const auto iterations = heavy ? HEAVY_ITERATIONS : LIGHT_ITERATIONS; 
+		double intermediate = 2. * double(val) / double(std::numeric_limits<unsigned int>::max()) - 1; 
+		for (size_t i = 0; i < iterations; i++)
+		{
+			intermediate = std::sin(std::cos(intermediate)); 
+		}
+		return unsigned int((intermediate + 1.) * 0.5 * double(std::numeric_limits<unsigned int>::max())); 
 	}
-}
+};
 
 //Following along with video tutorial series by ChiliTomatoNoodle
 class ControlObject
 {
 public:
-	ControlObject(int workerCount) : m_lk{ m_mtx }, m_workerCount{ workerCount }
+	ControlObject() : m_lk{ m_mtx }
 	{
 
 	}
 
 	void SignalDone()
 	{
+		bool needsNotification = false; 
 		{
 			std::lock_guard lk {m_mtx}; 
 			m_doneCount++; 
-		}
 
-		if (m_doneCount == m_workerCount)
+			//Has to happen while the mutex is still held, so there's no race condition
+			if (m_doneCount == WORKER_COUNT)
+			{
+				//Notify the condition variable of this thread. 
+				needsNotification = true; 
+			}
+		}
+		if (needsNotification)
 		{
-			//Notify the condition variable of this thread. 
-			m_cv.notify_one(); 
+			m_cv.notify_one();
 		}
 	}
 
 	void WaitForAllDone()
 	{
 		//Wait until work is done. 
-		m_cv.wait(m_lk, [this] {return m_doneCount == m_workerCount; }); 
+		m_cv.wait(m_lk, [this] {return m_doneCount == WORKER_COUNT; }); 
 		m_doneCount = 0; 
 	}
 
@@ -59,7 +79,6 @@ private:
 	std::condition_variable m_cv; 
 	std::mutex m_mtx; 
 	std::unique_lock<std::mutex> m_lk; 
-	int m_workerCount; 
 	//SharedMemory 
 	int m_doneCount = 0; 
 
@@ -74,12 +93,11 @@ public:
 	}
 
 	//Function will be called by the main thread. 
-	void SetJob(std::span<int> data, int* pOut)
+	void SetJob(std::span<const Task> data)
 	{
 		{
 			std::lock_guard lk {m_mtx}; 
 			m_input = data; 
-			m_pOutput = pOut; 
 		}
 
 		m_cv.notify_one(); 
@@ -95,17 +113,30 @@ public:
 		m_cv.notify_one();
 	}
 
+	double GetResult() const
+	{
+		return m_accumulate; 
+	}
+
 private:
+	void ProcessData_()
+	{
+		for (const auto& task : m_input)
+		{
+			m_accumulate += task.Process(); 
+		}
+	}
+
+	//Run is the while loop happening on the thread. The other functions here are interface functions abstracted, and happen from the main thread. 
 	void Run()
 	{
 		std::unique_lock lk {m_mtx}; 
 		while (true)
 		{
 			//1. Lock. 2. Extra condition. 
-			m_cv.wait(lk, [this] {return m_pOutput != nullptr || m_threadDying; }); 
+			m_cv.wait(lk, [this] {return !m_input.empty() || m_threadDying; }); 
 			if (m_threadDying) break; 
-			ProcessDataset(m_input, *m_pOutput); //Mutex remains locked when processing this. 
-			m_pOutput = nullptr; 
+			ProcessData_(); //Mutex remains locked when processing this. 
 			m_input = {}; //Zero out input. 
 			m_PControl->SignalDone(); 
 		}
@@ -117,127 +148,75 @@ private:
 	std::mutex m_mtx; 
 
 	//Shared memory. 
-	std::span<int> m_input; 
-	int* m_pOutput = nullptr; 
+	std::span<const Task> m_input; 
+	unsigned int m_accumulate = 0; 
 	bool m_threadDying = false; 
 };
 
-constexpr size_t DATASET_SIZE = 50000000; 
 
 
 
-
-std::vector<std::array<int, DATASET_SIZE>> GenerateDatasets()
+std::vector<std::array<Task, CHUNK_SIZE>> GenerateDatasets()
 {
 	std::minstd_rand randomNumberEngine;
-	std::vector<std::array<int, DATASET_SIZE>> datasets{4};
+	std::uniform_real_distribution<double> dist{-1., 1}; 
+	std::bernoulli_distribution dist2 {ProbabilityHeavy}; 
+	std::vector<std::array<Task, CHUNK_SIZE>> Chunks(CHUNK_COUNT);
 
-	for (auto& arr : datasets)
+	for (auto& chunk : Chunks)
 	{
 		//Generate random ranges. Just make this long
-		std::ranges::generate(arr, randomNumberEngine);
+		std::ranges::generate(chunk, [&] { return Task{ .val = randomNumberEngine(), .heavy = dist2(randomNumberEngine)};  });
 	}
 
-	return datasets; 
+	return Chunks; 
 }
 
-int BigOperation()
+int DoExperiment()
 {
-	auto datasets = GenerateDatasets(); 
-
-	Timer timer; 
-	std::vector<std::thread> workers; 
-
-
-	struct Value
-	{
-		int v; //4 byte data type
-		char padding[60]; //60 bytes to add up to 64 bytes. 
-	};
-
-	Value sum[4] = { 0, 0, 0, 0 };
-
-	timer.StartTimer();
-
-	for (size_t i = 0; i < 4; i++)
-	{
-		workers.push_back(std::thread{ProcessDataset, std::span{datasets[i]}, std::ref(sum[i].v)});
-	}
-
-	for (auto& w : workers)
-	{
-		w.join(); 
-	}
-
-	float timeElapsed = timer.GetTime(); 
-	printf("%f milliseconds \n", timeElapsed); 
-	printf("%d sum \n", sum[0].v + sum[1].v + sum[2].v + sum[3].v);
-
-	return 0; 
-}
-
-
-
-int SmallOperation()
-{
-
-	struct Value
-	{
-		int v; //4 byte data type
-		char padding[60]; //60 bytes to add up to 64 bytes. 
-	};
-
-	Value sum[4] = { 0, 0, 0, 0 };
+	const auto chunks = GenerateDatasets(); 
 
 	Timer timer;
 	timer.StartTimer();
 
-
-	constexpr size_t workerCount = 4;
-	ControlObject mControl{ workerCount };
-	//Unique_ptr is necessary here to prevent dangling pointers.
-	std::vector<std::unique_ptr<Worker>> workerPtrs;
-
-	for (size_t i = 0; i < workerCount; i++)
+	ControlObject mControl;
+	std::vector<std::unique_ptr<Worker>> workerPtrs; 
+	for (size_t i = 0; i < WORKER_COUNT; i++)
 	{
-		workerPtrs.push_back(std::make_unique<Worker>(&mControl)); //Pointers now going to be idling, waiting for jobs. 
+		workerPtrs.push_back(std::make_unique<Worker>(&mControl)); 
 	}
 
-
-	auto datasets = GenerateDatasets(); 
-
-	int grandTotal = 0; 
-	std::vector<std::jthread> workers;
-	const auto subsetSize = DATASET_SIZE / 10000;
-	for (size_t i = 0; i < DATASET_SIZE; i += subsetSize)
+	for (const auto& chunk : chunks)
 	{
-		for (size_t j = 0; j < 4; j++)
+		for (size_t iSubset = 0; iSubset < WORKER_COUNT; iSubset++)
 		{
-			workerPtrs[j]->SetJob(std::span{&datasets[j][i], subsetSize}, &sum[j].v);
+			workerPtrs[iSubset]->SetJob(std::span{&chunk[iSubset * SUBSET_SIZE], SUBSET_SIZE});
 		}
 		mControl.WaitForAllDone(); //This guy will wake up when all jobs are done. 
 	}
 
-	grandTotal = sum[0].v + sum[1].v + sum[2].v + sum[3].v;
-
 	float timeElapsed = timer.GetTime();
 	printf("%f milliseconds \n", timeElapsed);
-	printf("%d sum \n", grandTotal);
-
-	//Don't leave the threads dangling. 
+	unsigned int answer = 0.; 
+	for (const auto& w : workerPtrs)
+	{
+		answer += w->GetResult(); 
+	}
+	std::cout << "Result is " << answer << std::endl;
 
 	for (auto& w : workerPtrs)
 	{
 		w->Kill(); 
 	}
-	workerPtrs.clear(); 
 
 	return 0; 
+
 }
 
 int main(int argc, char** argv)
 {
 	
-	return SmallOperation(); 
+	//return SmallOperation(); 
 	//return BigOperation(); 
+	return DoExperiment(); 
 }
