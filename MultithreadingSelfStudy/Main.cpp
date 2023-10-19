@@ -9,6 +9,9 @@
 #include <span>
 #include <algorithm>
 #include <numeric>
+#include <numbers>
+#include <fstream>
+#include <format>
 #include "Timer.h"
 
 //Settings for now
@@ -25,18 +28,27 @@ static_assert(CHUNK_SIZE % WORKER_COUNT == 0);
 
 struct Task
 {
-	unsigned int val; 
+	double val; 
 	bool heavy; 
 	unsigned int Process() const
 	{
 		const auto iterations = heavy ? HEAVY_ITERATIONS : LIGHT_ITERATIONS; 
-		double intermediate = 2. * double(val) / double(std::numeric_limits<unsigned int>::max()) - 1; 
+		double intermediate = val; 
 		for (size_t i = 0; i < iterations; i++)
 		{
-			intermediate = std::sin(std::cos(intermediate)); 
+			unsigned int digits = unsigned int(std::abs(std::sin(std::cos(intermediate)) * 10000000)) % 100000; //Module slice out some digits.
+			intermediate = double(digits) / 10000.;
 		}
-		return unsigned int((intermediate + 1.) * 0.5 * double(std::numeric_limits<unsigned int>::max())); 
+		return unsigned int(std::exp(intermediate)); 
 	}
+};
+
+struct ChunkTimingInfo
+{
+	std::array<float, WORKER_COUNT> timeSpentWorkingPerThread; 
+	std::array<size_t, WORKER_COUNT> numberOfHeavyItemsPerThread; 
+	float totalChunkTime; 
+
 };
 
 //Following along with video tutorial series by ChiliTomatoNoodle
@@ -113,17 +125,29 @@ public:
 		m_cv.notify_one();
 	}
 
+	float GetJobWorkTime() const
+	{
+		return m_workTime; 
+	}
+
 	double GetResult() const
 	{
 		return m_accumulate; 
 	}
 
+	size_t GetNumHeavyItemsProcessed() const
+	{
+		return m_heavyItemsProcessed; 
+	}
+
 private:
 	void ProcessData_()
 	{
+		m_heavyItemsProcessed = 0; 
 		for (const auto& task : m_input)
 		{
 			m_accumulate += task.Process(); 
+			m_heavyItemsProcessed += task.heavy ? 1 : 0; 
 		}
 	}
 
@@ -131,12 +155,17 @@ private:
 	void Run()
 	{
 		std::unique_lock lk {m_mtx}; 
+		Timer localTimer;
 		while (true)
 		{
 			//1. Lock. 2. Extra condition. 
 			m_cv.wait(lk, [this] {return !m_input.empty() || m_threadDying; }); 
 			if (m_threadDying) break; 
+
+			localTimer.StartTimer(); 
 			ProcessData_(); //Mutex remains locked when processing this. 
+			m_workTime = localTimer.GetTime(); 
+
 			m_input = {}; //Zero out input. 
 			m_PControl->SignalDone(); 
 		}
@@ -151,6 +180,8 @@ private:
 	std::span<const Task> m_input; 
 	unsigned int m_accumulate = 0; 
 	bool m_threadDying = false; 
+	float m_workTime = -1.f;
+	size_t m_heavyItemsProcessed = 0; 
 };
 
 
@@ -159,14 +190,14 @@ private:
 std::vector<std::array<Task, CHUNK_SIZE>> GenerateDatasets()
 {
 	std::minstd_rand randomNumberEngine;
-	std::uniform_real_distribution<double> dist{-1., 1}; 
+	std::uniform_real_distribution dist {0., std::numbers::pi};
 	std::bernoulli_distribution dist2 {ProbabilityHeavy}; 
 	std::vector<std::array<Task, CHUNK_SIZE>> Chunks(CHUNK_COUNT);
 
 	for (auto& chunk : Chunks)
 	{
 		//Generate random ranges. Just make this long
-		std::ranges::generate(chunk, [&] { return Task{ .val = randomNumberEngine(), .heavy = dist2(randomNumberEngine)};  });
+		std::ranges::generate(chunk, [&] { return Task{ .val = dist(randomNumberEngine), .heavy = dist2(randomNumberEngine)};  });
 	}
 
 	return Chunks; 
@@ -186,23 +217,60 @@ int DoExperiment()
 		workerPtrs.push_back(std::make_unique<Worker>(&mControl)); 
 	}
 
+	std::vector<ChunkTimingInfo> timings; 
+	timings.reserve(CHUNK_COUNT); 
+
+	Timer chunkTimer; 
+
 	for (const auto& chunk : chunks)
 	{
+		chunkTimer.StartTimer(); 
 		for (size_t iSubset = 0; iSubset < WORKER_COUNT; iSubset++)
 		{
 			workerPtrs[iSubset]->SetJob(std::span{&chunk[iSubset * SUBSET_SIZE], SUBSET_SIZE});
 		}
 		mControl.WaitForAllDone(); //This guy will wake up when all jobs are done. 
+		const auto chunkTime = chunkTimer.GetTime(); 
+		timings.push_back({});
+		for (size_t i = 0; i < WORKER_COUNT; i++)
+		{
+			timings.back().numberOfHeavyItemsPerThread[i] = workerPtrs[i]->GetNumHeavyItemsProcessed(); 
+			timings.back().timeSpentWorkingPerThread[i] = workerPtrs[i]->GetJobWorkTime(); 
+			timings.back().totalChunkTime = chunkTime; 
+		}
 	}
 
 	float timeElapsed = timer.GetTime();
-	printf("%f milliseconds \n", timeElapsed);
+	printf("%f microseconds \n", timeElapsed);
 	unsigned int answer = 0.; 
 	for (const auto& w : workerPtrs)
 	{
 		answer += w->GetResult(); 
 	}
 	std::cout << "Result is " << answer << std::endl;
+
+	//Output csv of chunk timings. 
+	// worktime, idletime, numberofheavies x workers + total time, total heavies
+	std::ofstream csv{ "timings.csv" }; 
+	for (size_t i = 0; i < WORKER_COUNT; i++)
+	{
+		csv << std::format("work_{0:};idle_{0:};heavy_{0:};", i);
+	}
+	csv << "chunktime,total_heavy\n"; 
+
+	for (const auto& chunk : timings)
+	{
+		for (size_t i = 0; i < WORKER_COUNT; i++)
+		{
+			csv << std::format("{};{};{};", 
+				chunk.timeSpentWorkingPerThread[i], 
+				chunk.totalChunkTime - chunk.timeSpentWorkingPerThread[i], 
+				chunk.numberOfHeavyItemsPerThread[i]);
+		}
+		csv << std::format("{};{}\n", chunk.totalChunkTime,
+			std::accumulate(std::begin(chunk.numberOfHeavyItemsPerThread), std::end(chunk.numberOfHeavyItemsPerThread), size_t{ 0 }));
+	}
+
 
 	for (auto& w : workerPtrs)
 	{

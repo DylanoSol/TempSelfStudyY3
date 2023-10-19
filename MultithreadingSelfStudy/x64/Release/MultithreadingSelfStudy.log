@@ -1,9 +1,9 @@
 ﻿  Main.cpp
-D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(200,22): warning C4244: 'initializing': conversion from 'double' to 'unsigned int', possible loss of data
-D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(203,25): warning C4244: '+=': conversion from 'double' to 'unsigned int', possible loss of data
+D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(245,22): warning C4244: 'initializing': conversion from 'double' to 'unsigned int', possible loss of data
+D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(248,25): warning C4244: '+=': conversion from 'double' to 'unsigned int', possible loss of data
   Generating code
-  70 of 330 functions (21.2%) were compiled, the rest were copied from previous compilation.
-    66 functions were new in current compilation
-    1 functions had inline decision re-evaluated but remain unchanged
+  8 of 1219 functions ( 0.7%) were compiled, the rest were copied from previous compilation.
+    0 functions were new in current compilation
+    8 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   MultithreadingSelfStudy.vcxproj -> D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\x64\Release\MultithreadingSelfStudy.exe
