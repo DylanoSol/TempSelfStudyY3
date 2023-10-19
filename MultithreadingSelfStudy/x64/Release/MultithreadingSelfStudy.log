@@ -1,16 +1,16 @@
 ﻿  Main.cpp
-D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(284,22): warning C4244: 'initializing': conversion from 'double' to 'unsigned int', possible loss of data
-D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(287,25): warning C4244: '+=': conversion from 'double' to 'unsigned int', possible loss of data
-D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(307,17): warning C4244: 'initializing': conversion from 'const _Ty' to 'double', possible loss of data
+D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(301,22): warning C4244: 'initializing': conversion from 'double' to 'unsigned int', possible loss of data
+D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(304,25): warning C4244: '+=': conversion from 'double' to 'unsigned int', possible loss of data
+D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(326,18): warning C4244: 'initializing': conversion from 'const _Ty' to 'double', possible loss of data
           with
           [
               _Ty=size_t
           ]
-D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(310,17): warning C4244: '+=': conversion from 'double' to 'float', possible loss of data
-D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(311,18): warning C4244: '+=': conversion from 'double' to 'size_t', possible loss of data
+D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(329,18): warning C4244: '+=': conversion from 'double' to 'float', possible loss of data
+D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\Main.cpp(330,19): warning C4244: '+=': conversion from 'double' to 'size_t', possible loss of data
   Generating code
-  42 of 1225 functions ( 3.4%) were compiled, the rest were copied from previous compilation.
-    19 functions were new in current compilation
-    24 functions had inline decision re-evaluated but remain unchanged
+  100 of 388 functions (25.8%) were compiled, the rest were copied from previous compilation.
+    0 functions were new in current compilation
+    19 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   MultithreadingSelfStudy.vcxproj -> D:\Gamedevving\Repositories\TempSelfStudyY3\MultithreadingSelfStudy\x64\Release\MultithreadingSelfStudy.exe

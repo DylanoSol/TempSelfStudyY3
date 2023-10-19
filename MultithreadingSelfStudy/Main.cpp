@@ -16,6 +16,7 @@
 #include "Timer.h"
 
 //Settings for now
+constexpr bool ChunkMeasurementEnabled = false; 
 constexpr size_t WORKER_COUNT = 4; 
 constexpr size_t CHUNK_SIZE = 8000;
 constexpr size_t CHUNK_COUNT = 100;
@@ -148,7 +149,10 @@ private:
 		for (const auto& task : m_input)
 		{
 			m_accumulate += task.Process(); 
-			m_heavyItemsProcessed += task.heavy ? 1 : 0; 
+			if constexpr(ChunkMeasurementEnabled)
+			{
+				m_heavyItemsProcessed += task.heavy ? 1 : 0; 
+			}
 		}
 	}
 
@@ -163,9 +167,16 @@ private:
 			m_cv.wait(lk, [this] {return !m_input.empty() || m_threadDying; }); 
 			if (m_threadDying) break; 
 
-			localTimer.StartTimer(); 
+			if constexpr (ChunkMeasurementEnabled)
+			{
+				localTimer.StartTimer(); 
+			}
 			ProcessData_(); //Mutex remains locked when processing this. 
-			m_workTime = localTimer.GetTime(); 
+
+			if constexpr (ChunkMeasurementEnabled)
+			{
+				m_workTime = localTimer.GetTime(); 
+			}
 
 			m_input = {}; //Zero out input. 
 			m_PControl->SignalDone(); 
@@ -263,19 +274,25 @@ int DoExperiment(bool stacked = false)
 
 	for (const auto& chunk : chunks)
 	{
-		chunkTimer.StartTimer(); 
+		if constexpr (ChunkMeasurementEnabled)
+		{
+			chunkTimer.StartTimer(); 
+		}
 		for (size_t iSubset = 0; iSubset < WORKER_COUNT; iSubset++)
 		{
 			workerPtrs[iSubset]->SetJob(std::span{&chunk[iSubset * SUBSET_SIZE], SUBSET_SIZE});
 		}
 		mControl.WaitForAllDone(); //This guy will wake up when all jobs are done. 
-		const auto chunkTime = chunkTimer.GetTime(); 
-		timings.push_back({});
-		for (size_t i = 0; i < WORKER_COUNT; i++)
+		if constexpr (ChunkMeasurementEnabled)
 		{
-			timings.back().numberOfHeavyItemsPerThread[i] = workerPtrs[i]->GetNumHeavyItemsProcessed(); 
-			timings.back().timeSpentWorkingPerThread[i] = workerPtrs[i]->GetJobWorkTime(); 
-			timings.back().totalChunkTime = chunkTime; 
+			const auto chunkTime = chunkTimer.GetTime();
+			timings.push_back({});
+			for (size_t i = 0; i < WORKER_COUNT; i++)
+			{
+				timings.back().numberOfHeavyItemsPerThread[i] = workerPtrs[i]->GetNumHeavyItemsProcessed();
+				timings.back().timeSpentWorkingPerThread[i] = workerPtrs[i]->GetJobWorkTime();
+				timings.back().totalChunkTime = chunkTime;
+			}
 		}
 	}
 
@@ -290,27 +307,30 @@ int DoExperiment(bool stacked = false)
 
 	//Output csv of chunk timings. 
 	// worktime, idletime, numberofheavies x workers + total time, total heavies
-	std::ofstream csv{ "timings.csv" , std::ios_base::trunc}; 
-	for (size_t i = 0; i < WORKER_COUNT; i++)
+	if constexpr (ChunkMeasurementEnabled)
 	{
-		csv << std::format("work_{0:};idle_{0:};heavy_{0:};", i);
-	}
-	csv << "chunktime,total_idle,total_heavy\n"; 
-
-	for (const auto& chunk : timings)
-	{
-		float totalIdle = 0.f; 
-		size_t totalHeavy = 0; 
+		std::ofstream csv{ "timings.csv", std::ios_base::trunc};
 		for (size_t i = 0; i < WORKER_COUNT; i++)
 		{
-			double idle = chunk.totalChunkTime - chunk.timeSpentWorkingPerThread[i];
-			double heavy = chunk.numberOfHeavyItemsPerThread[i]; 
-
-			csv << std::format("{};{};{};", chunk.timeSpentWorkingPerThread[i], idle, heavy);
-			totalIdle += idle; 
-			totalHeavy += heavy; 
+			csv << std::format("work_{0:};idle_{0:};heavy_{0:};", i);
 		}
-		csv << std::format("{};{};{}\n", chunk.totalChunkTime, totalIdle, totalHeavy);
+		csv << "chunktime,total_idle,total_heavy\n";
+
+		for (const auto& chunk : timings)
+		{
+			float totalIdle = 0.f;
+			size_t totalHeavy = 0;
+			for (size_t i = 0; i < WORKER_COUNT; i++)
+			{
+				double idle = chunk.totalChunkTime - chunk.timeSpentWorkingPerThread[i];
+				double heavy = chunk.numberOfHeavyItemsPerThread[i];
+
+				csv << std::format("{};{};{};", chunk.timeSpentWorkingPerThread[i], idle, heavy);
+				totalIdle += idle;
+				totalHeavy += heavy;
+			}
+			csv << std::format("{};{};{}\n", chunk.totalChunkTime, totalIdle, totalHeavy);
+		}
 	}
 
 
