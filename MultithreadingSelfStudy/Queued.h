@@ -154,20 +154,8 @@ namespace queue
 		size_t m_heavyItemsProcessed = 0;
 	};
 
-	int DoExperiment(bool stacked = false)
+	int DoExperiment(std::vector<std::array<Task, CHUNK_SIZE>> chunks)
 	{
-		const auto chunks = [=]
-		{
-			if (stacked)
-			{
-				return GenerateDatasetsStacked();
-			}
-			else
-			{
-				return GenerateDatasetsEvenly();
-			}
-		}();
-
 		Timer timer;
 		timer.StartTimer();
 

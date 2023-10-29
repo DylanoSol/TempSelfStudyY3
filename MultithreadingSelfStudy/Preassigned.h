@@ -52,9 +52,6 @@ namespace preassigned
 		std::unique_lock<std::mutex> m_lk;
 		//SharedMemory 
 		int m_doneCount = 0;
-
-		size_t m_index = 0;
-
 	};
 
 	class Worker
@@ -99,6 +96,11 @@ namespace preassigned
 		size_t GetNumHeavyItemsProcessed() const
 		{
 			return m_heavyItemsProcessed;
+		}
+
+		~Worker()
+		{
+			Kill(); 
 		}
 
 	private:
@@ -155,32 +157,18 @@ namespace preassigned
 		size_t m_heavyItemsProcessed = 0;
 	};
 
-	int DoExperiment(bool stacked = false)
+	int DoExperiment(std::vector<std::array<Task, CHUNK_SIZE>> chunks)
 	{
-		const auto chunks = [=]
-		{
-			if (stacked)
-			{
-				return GenerateDatasetsStacked();
-			}
-			else
-			{
-				return GenerateDatasetsEvenly();
-			}
-		}();
+		std::vector<ChunkTimingInfo> timings;
+		timings.reserve(CHUNK_COUNT);
 
 		Timer timer;
 		timer.StartTimer();
 
 		ControlObject mControl;
-		std::vector<std::unique_ptr<Worker>> workerPtrs;
-		for (size_t i = 0; i < WORKER_COUNT; i++)
-		{
-			workerPtrs.push_back(std::make_unique<Worker>(&mControl));
-		}
+		std::vector<std::unique_ptr<Worker>> workerPtrs(WORKER_COUNT);
 
-		std::vector<ChunkTimingInfo> timings;
-		timings.reserve(CHUNK_COUNT);
+		std::ranges::generate(workerPtrs, [m_PControl = &mControl] {return std::make_unique<Worker>(m_PControl); });
 
 		Timer chunkTimer;
 
