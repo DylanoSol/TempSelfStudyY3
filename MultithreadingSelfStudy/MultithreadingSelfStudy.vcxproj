@@ -134,7 +134,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Globals.h" />
-    <ClInclude Include="popl.h" />
     <ClInclude Include="Preassigned.h" />
     <ClInclude Include="Queued.h" />
     <ClInclude Include="Task.h" />
