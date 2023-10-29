@@ -9,9 +9,8 @@
 #include "Timing.h"
 #include "Timer.h"
 
-namespace queue
+namespace queued
 {
-
 	class ControlObject
 	{
 	public:
@@ -53,7 +52,6 @@ namespace queue
 		std::unique_lock<std::mutex> m_lk;
 		//SharedMemory 
 		int m_doneCount = 0;
-
 	};
 
 	class Worker
@@ -98,6 +96,11 @@ namespace queue
 		size_t GetNumHeavyItemsProcessed() const
 		{
 			return m_heavyItemsProcessed;
+		}
+
+		~Worker()
+		{
+			Kill();
 		}
 
 	private:
@@ -156,18 +159,16 @@ namespace queue
 
 	int DoExperiment(std::vector<std::array<Task, CHUNK_SIZE>> chunks)
 	{
+		std::vector<ChunkTimingInfo> timings;
+		timings.reserve(CHUNK_COUNT);
+
 		Timer timer;
 		timer.StartTimer();
 
 		ControlObject mControl;
-		std::vector<std::unique_ptr<Worker>> workerPtrs;
-		for (size_t i = 0; i < WORKER_COUNT; i++)
-		{
-			workerPtrs.push_back(std::make_unique<Worker>(&mControl));
-		}
+		std::vector<std::unique_ptr<Worker>> workerPtrs(WORKER_COUNT);
 
-		std::vector<ChunkTimingInfo> timings;
-		timings.reserve(CHUNK_COUNT);
+		std::ranges::generate(workerPtrs, [m_PControl = &mControl] {return std::make_unique<Worker>(m_PControl); });
 
 		Timer chunkTimer;
 

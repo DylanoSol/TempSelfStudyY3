@@ -43,5 +43,5 @@ int main(int argc, char** argv)
     }
 
     // run experiment
-    return preassigned::DoExperiment(true);
+    return queued::DoExperiment(data);
 }
