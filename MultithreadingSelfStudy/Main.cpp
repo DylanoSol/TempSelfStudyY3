@@ -1,18 +1,15 @@
 #include <iostream>
 #include <vector>
-#include <array>
 #include <random>
 #include <ranges> 
 #include <limits>
 #include <thread>
 #include <mutex>
-#include <span>
 #include <algorithm>
 #include <numeric>
 #include <numbers>
-#include <fstream>
-#include <format>
 #include <functional>
+#include "Timing.h"
 #include "Globals.h"
 #include "popl.h"
 #include "Timer.h"
@@ -34,13 +31,7 @@ struct Task
 	}
 };
 
-struct ChunkTimingInfo
-{
-	std::array<float, WORKER_COUNT> timeSpentWorkingPerThread; 
-	std::array<size_t, WORKER_COUNT> numberOfHeavyItemsPerThread; 
-	float totalChunkTime; 
 
-};
 
 
 
@@ -544,28 +535,7 @@ int DoExperimentQueue(bool stacked = false)
 	// worktime, idletime, numberofheavies x workers + total time, total heavies
 	if constexpr (ChunkMeasurementEnabled)
 	{
-		std::ofstream csv{ "timings.csv", std::ios_base::trunc};
-		for (size_t i = 0; i < WORKER_COUNT; i++)
-		{
-			csv << std::format("work_{0:};idle_{0:};heavy_{0:};", i);
-		}
-		csv << "chunktime,total_idle,total_heavy\n";
-
-		for (const auto& chunk : timings)
-		{
-			float totalIdle = 0.f;
-			size_t totalHeavy = 0;
-			for (size_t i = 0; i < WORKER_COUNT; i++)
-			{
-				double idle = chunk.totalChunkTime - chunk.timeSpentWorkingPerThread[i];
-				double heavy = chunk.numberOfHeavyItemsPerThread[i];
-
-				csv << std::format("{};{};{};", chunk.timeSpentWorkingPerThread[i], idle, heavy);
-				totalIdle += idle;
-				totalHeavy += heavy;
-			}
-			csv << std::format("{};{};{}\n", chunk.totalChunkTime, totalIdle, totalHeavy);
-		}
+		WriteCSV(timings);
 	}
 
 
