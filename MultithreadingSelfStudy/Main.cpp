@@ -13,21 +13,9 @@
 #include <fstream>
 #include <format>
 #include <functional>
+#include "Globals.h"
 #include "popl.h"
 #include "Timer.h"
-
-//Settings for now
-constexpr bool ChunkMeasurementEnabled = false; 
-constexpr size_t WORKER_COUNT = 4; 
-constexpr size_t CHUNK_SIZE = 8000;
-constexpr size_t CHUNK_COUNT = 100;
-constexpr size_t SUBSET_SIZE = CHUNK_SIZE / WORKER_COUNT; 
-constexpr size_t LIGHT_ITERATIONS = 100;
-constexpr size_t HEAVY_ITERATIONS = 1000;
-constexpr double ProbabilityHeavy = .15; 
-
-static_assert(CHUNK_SIZE >= WORKER_COUNT); 
-static_assert(CHUNK_SIZE % WORKER_COUNT == 0);
 
 struct Task
 {
