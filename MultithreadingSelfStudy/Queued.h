@@ -46,12 +46,30 @@ namespace queued
 			m_doneCount = 0;
 		}
 
+		void SetChunk(std::span<const Task> chunk)
+		{
+			m_index = 0; 
+			m_currentChunk = chunk; 
+		}
+
+		const Task* GetTask()
+		{
+			const auto i = m_index++; 
+			if (i >= CHUNK_SIZE)
+			{
+				return nullptr; 
+			}
+			return &m_currentChunk[i]; 
+		}
+
 	private:
 		std::condition_variable m_cv;
 		std::mutex m_mtx;
 		std::unique_lock<std::mutex> m_lk;
+		std::span<const Task> m_currentChunk; //Basically a flexible array. 
 		//SharedMemory 
 		int m_doneCount = 0;
+		std::atomic<size_t> m_index = 0; 
 	};
 
 	class Worker
@@ -62,15 +80,13 @@ namespace queued
 
 		}
 
-		//Function will be called by the main thread. 
-		void SetJob(std::span<const Task> data)
+		void StartWork()
 		{
 			{
 				std::lock_guard lk {m_mtx};
-				m_input = data;
+				m_working = true;
 			}
-
-			m_cv.notify_one();
+			m_cv.notify_one(); 
 		}
 
 		void Kill()
@@ -106,13 +122,14 @@ namespace queued
 	private:
 		void ProcessData_()
 		{
+
 			m_heavyItemsProcessed = 0;
-			for (const auto& task : m_input)
+			while (auto pTask = m_PControl->GetTask()) //As long as there are still tasks, it will keep running. 
 			{
-				m_accumulate += task.Process();
+				m_accumulate += pTask->Process();
 				if constexpr (ChunkMeasurementEnabled)
 				{
-					m_heavyItemsProcessed += task.heavy ? 1 : 0;
+					m_heavyItemsProcessed += pTask->heavy ? 1 : 0;
 				}
 			}
 		}
@@ -125,7 +142,7 @@ namespace queued
 			while (true)
 			{
 				//1. Lock. 2. Extra condition. 
-				m_cv.wait(lk, [this] {return !m_input.empty() || m_threadDying; });
+				m_cv.wait(lk, [this] {return m_working || m_threadDying; }); //If working or dying, wake up. 
 				if (m_threadDying) break;
 
 				if constexpr (ChunkMeasurementEnabled)
@@ -139,7 +156,7 @@ namespace queued
 					m_workTime = localTimer.GetTime();
 				}
 
-				m_input = {}; //Zero out input. 
+				m_working = false; 
 				m_PControl->SignalDone();
 			}
 		}
@@ -150,11 +167,11 @@ namespace queued
 		std::mutex m_mtx;
 
 		//Shared memory. 
-		std::span<const Task> m_input;
 		unsigned int m_accumulate = 0;
 		bool m_threadDying = false;
 		float m_workTime = -1.f;
 		size_t m_heavyItemsProcessed = 0;
+		bool m_working = false; 
 	};
 
 	int DoExperiment(std::vector<std::array<Task, CHUNK_SIZE>> chunks)
@@ -178,10 +195,13 @@ namespace queued
 			{
 				chunkTimer.StartTimer();
 			}
-			for (size_t iSubset = 0; iSubset < WORKER_COUNT; iSubset++)
+
+			mControl.SetChunk(chunk); 
+			for (auto& pWorker : workerPtrs)
 			{
-				workerPtrs[iSubset]->SetJob(std::span{&chunk[iSubset * SUBSET_SIZE], SUBSET_SIZE});
+				pWorker->StartWork(); 
 			}
+			
 			mControl.WaitForAllDone(); //This guy will wake up when all jobs are done. 
 			if constexpr (ChunkMeasurementEnabled)
 			{
