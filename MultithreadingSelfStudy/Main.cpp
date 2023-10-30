@@ -15,6 +15,7 @@
 #include "Timer.h"
 #include "Preassigned.h"
 #include "Queued.h"
+#include "AtomicQueued.h"
 
 using namespace preassigned; 
 
@@ -43,5 +44,5 @@ int main(int argc, char** argv)
     }
 
     // run experiment
-    return queued::DoExperiment(data);
+    return AtomicQueued::DoExperiment(data);
 }

@@ -9,7 +9,7 @@
 #include "Timing.h"
 #include "Timer.h"
 
-namespace queued
+namespace AtomicQueued
 {
 	class ControlObject
 	{
@@ -48,19 +48,18 @@ namespace queued
 
 		void SetChunk(std::span<const Task> chunk)
 		{
-			m_index = 0; 
-			m_currentChunk = chunk; 
+			m_index = 0;
+			m_currentChunk = chunk;
 		}
 
 		const Task* GetTask()
 		{
-			std::lock_guard lk {m_mtx};
-			const auto i = m_index++; 
+			const auto i = m_index++;
 			if (i >= CHUNK_SIZE)
 			{
-				return nullptr; 
+				return nullptr;
 			}
-			return &m_currentChunk[i]; 
+			return &m_currentChunk[i];
 		}
 
 	private:
@@ -70,7 +69,7 @@ namespace queued
 		std::span<const Task> m_currentChunk; //Basically a flexible array. 
 		//SharedMemory 
 		int m_doneCount = 0;
-		size_t m_index = 0; 
+		std::atomic<size_t> m_index = 0;
 	};
 
 	class Worker
@@ -87,7 +86,7 @@ namespace queued
 				std::lock_guard lk {m_mtx};
 				m_working = true;
 			}
-			m_cv.notify_one(); 
+			m_cv.notify_one();
 		}
 
 		void Kill()
@@ -157,7 +156,7 @@ namespace queued
 					m_workTime = localTimer.GetTime();
 				}
 
-				m_working = false; 
+				m_working = false;
 				m_PControl->SignalDone();
 			}
 		}
@@ -172,7 +171,7 @@ namespace queued
 		bool m_threadDying = false;
 		float m_workTime = -1.f;
 		size_t m_heavyItemsProcessed = 0;
-		bool m_working = false; 
+		bool m_working = false;
 	};
 
 	int DoExperiment(std::vector<std::array<Task, CHUNK_SIZE>> chunks)
@@ -197,12 +196,12 @@ namespace queued
 				chunkTimer.StartTimer();
 			}
 
-			mControl.SetChunk(chunk); 
+			mControl.SetChunk(chunk);
 			for (auto& pWorker : workerPtrs)
 			{
-				pWorker->StartWork(); 
+				pWorker->StartWork();
 			}
-			
+
 			mControl.WaitForAllDone(); //This guy will wake up when all jobs are done. 
 			if constexpr (ChunkMeasurementEnabled)
 			{
