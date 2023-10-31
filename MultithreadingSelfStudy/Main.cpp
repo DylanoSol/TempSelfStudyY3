@@ -9,7 +9,9 @@
 #include <numeric>
 #include <numbers>
 #include <functional>
+#include <sstream>
 #include <condition_variable>
+#include <deque>
 #include "Timing.h"
 #include "Globals.h"
 #include "Task.h"
@@ -26,22 +28,53 @@ namespace tk
     class ThreadPool
     {
     public: 
-        void Run(Task task)
+        ThreadPool(size_t numWorkers)
         {
-            if (auto i = std::ranges::find_if(m_workers, [](const auto& w) {return !w->IsBusy(); }); i != m_workers.end())
+            m_workers.reserve(numWorkers); 
+            for (size_t i = 0; i < numWorkers; i++)
             {
-                (*i)->Run(std::move(task)); 
-            }
-            else
-            {
-                m_workers.push_back(std::make_unique<Worker>()); 
-                m_workers.back()->Run(std::move(task)); 
+                m_workers.emplace_back(this); 
             }
         }
-
-        bool IsRunningTasks()
+        void Run(Task task)
         {
-           return std::ranges::any_of(m_workers, [](const auto& w) {return w->IsBusy();  }); 
+            {
+                std::lock_guard lk {m_taskQueueMtx};
+                m_tasks.push_back(std::move(task));
+            } //We want to release the mutex before notifying the condition variable. 
+            m_cv.notify_one(); 
+        }
+
+        Task GetTask(std::stop_token& st)
+        {
+            //This is done among a single mutex. If something locks a mutex, it will be unavailable to all other things that have access to the mutex. 
+            Task task; 
+            std::unique_lock lk {m_taskQueueMtx}; 
+            m_cv.wait(lk, st, [this] {return !m_tasks.empty(); });
+            if (!st.stop_requested())
+            {
+                task = std::move(m_tasks.front()); 
+                m_tasks.pop_front(); 
+                if (m_tasks.empty())
+                {
+                    m_AllDonecv.notify_all(); //Notify all the people waiting for this condition. 
+                }
+            }
+            return task; //We can check for empty task in the call. 
+        }
+
+        void WaitForAllDone()
+        {
+            std::unique_lock lk {m_taskQueueMtx}; 
+            m_AllDonecv.wait(lk, [this] {return m_tasks.empty(); }); //Block when task queue is empty.
+        }
+
+        ~ThreadPool()
+        {
+            for (auto& w : m_workers)
+            {
+                w.RequestStop(); 
+            }
         }
 
     private: 
@@ -49,49 +82,35 @@ namespace tk
         class Worker
         {
         public:
-            Worker() : m_thread(&Worker::RunKernel, this)
+            Worker(ThreadPool* pool) : m_PPool{ pool }, m_thread(std::bind_front(&Worker::RunKernel, this))
             {
 
             }
-
-            bool IsBusy() const
+            void RequestStop()
             {
-                return m_busy;
-            }
-            void Run(Task task)
-            {
-                std::unique_lock lk {m_mtx}; 
-                m_task = std::move(task);
-                m_busy = true;
-                m_cv.notify_one();
+                m_thread.request_stop(); 
             }
 
         private:
-            void RunKernel() //Jthread thing
+            void RunKernel(std::stop_token st) //Jthread thing
             {
-                std::unique_lock lk {m_mtx};
-                auto st = m_thread.get_stop_token();
-                while (m_cv.wait(lk, st, [this]() -> bool {return m_busy; }))
+               
+                while (auto task = m_PPool->GetTask(st))
                 {
-                    
-                    //Wakeup point
-                    if (st.stop_requested())
-                    {
-                        return;
-                    }
-                    m_task();
-                    m_task = {}; //Empty the task
-                    m_busy = false;
+                    task(); 
                 }
+     
             }
-
-            std::atomic<bool> m_busy = false;
-            std::condition_variable_any m_cv;
-            std::mutex m_mtx;
-            Task m_task;
+            ThreadPool* m_PPool; 
             std::jthread m_thread;
         };
-        std::vector<std::unique_ptr<Worker>> m_workers; 
+
+        //Data
+        std::mutex m_taskQueueMtx; 
+        std::condition_variable_any m_cv; 
+        std::condition_variable_any m_AllDonecv;
+        std::deque<Task> m_tasks; 
+        std::vector<Worker> m_workers; 
 
     };
 }
@@ -106,15 +125,25 @@ enum Datasets
 
 int main(int argc, char** argv)
 {
-    tk::ThreadPool pool; 
-    pool.Run([] { std::cout << "Hi" << std::endl; });
-    pool.Run([] { std::cout << "Ho" << std::endl; });
+    using namespace std::chrono_literals; 
+    tk::ThreadPool pool(WORKER_COUNT); 
 
-    while (pool.IsRunningTasks())
+    const auto spitt = []
     {
-        using namespace std::chrono_literals; 
-        std::this_thread::sleep_for(16ms); 
+        std::this_thread::sleep_for(500ms);
+        std::ostringstream ss;
+        ss << std::this_thread::get_id();
+        std::cout << std::format("<< {} >> ", ss.str()) << std::flush;
+       
+    };
+
+    for (int i = 0; i < 32; i++)
+    {
+        pool.Run(spitt); 
     }
+
+    pool.WaitForAllDone(); 
+
     return 0; 
     /*
     Datasets run = Datasets::STACKED; 
