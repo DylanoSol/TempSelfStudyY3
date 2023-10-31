@@ -26,7 +26,7 @@
 namespace tk
 {
     //Research templates
-    using Task = std::function<void()>; 
+    
     template<typename T>
     class SharedState
     {
@@ -99,7 +99,56 @@ namespace tk
     };
 
  
+    class Task
+    {
+    public: 
+        Task() = default; 
+        Task(const Task&) = delete; //no copy constructor, we only want to move tasks. 
+        Task(Task&& donor) noexcept : m_executor{ std::move(donor.m_executor) } {}
+        Task& operator=(const Task&) = delete; 
+        Task& operator=(Task&& rhs) noexcept
+        {
+            m_executor = std::move(rhs.m_executor); 
+            return *this; 
+        }
 
+        void operator()()
+        {
+            m_executor(); 
+        }
+        operator bool() const
+        {
+            return (bool)m_executor; 
+        }
+        template<typename F, typename...A>
+        static auto Make(F&& function, A&&... arguments) //Make a task. 
+        {
+            Promise<std::invoke_result_t<F, A...>> promise; 
+            auto future = promise.GetFuture(); 
+            return std::make_pair(
+                Task{ std::forward<F>(function), std::move(promise), std::forward<A>(arguments)... },
+                std::move(future)
+            ); 
+        }
+
+
+    private: 
+        template<typename F, typename P, typename...A>
+        Task(F&& function, P&& promise, A&&... arguments)
+        {
+            m_executor =
+                //Capture this
+                [
+                    function = std::forward<F>(function),
+                    promise = std::forward<P>(promise),
+                    ...arguments = std::forward<A>(arguments) //captures parameter pack
+                ]() mutable
+            {
+                promise.Set(function(std::forward<A>(arguments)...));
+            };
+        }
+        std::function<void()> m_executor; 
+    };
 
     class ThreadPool
     {
@@ -224,7 +273,7 @@ int main(int argc, char** argv)
     */
 
     tk::Promise<int> promise; 
-    auto future = promise.GetFuture(); //Both ends of the transaction set. 
+    auto futur = promise.GetFuture(); //Both ends of the transaction set. 
 
     std::thread{ [](tk::Promise<int> p)
         {
@@ -232,7 +281,15 @@ int main(int argc, char** argv)
             p.Set(120);
     }, std::move(promise) }.detach(); 
 
-    std::cout << future.Get() << std::endl; //Future blocks until it gets the value. 
+    std::cout << futur.Get() << std::endl; //Future blocks until it gets the value. 
+
+    auto [task, future] = tk::Task::Make([](int x)
+        {
+            std::this_thread::sleep_for(1000ms);
+            return x + 320;
+        }, 400);
+    std::thread{std::move(task)}.detach(); 
+    std::cout << future.Get() << std::endl; 
 
     return 0; 
     /*
