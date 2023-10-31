@@ -51,6 +51,29 @@ namespace tk
         std::optional<T> m_result; //Result of asynchronous operation. google what std::optional does.  
     };
 
+    template<>
+    class SharedState<void>
+    {
+    public:
+        void Set() //Promise
+        {
+            if (!m_complete)
+            {
+                m_complete = true; 
+                m_readySignal.release(); //Releases 1 count of the semaphore
+            }
+        }
+
+        void Get() //Future, should sleep until the promise is set. 
+        {
+            m_readySignal.acquire(); //Blocks unless the value has been already set. 
+           
+        }
+    private:
+        std::binary_semaphore m_readySignal{ 0 }; //0, so no resources available yet. 
+        bool m_complete = false; 
+    };
+
     template<typename T> 
     class Promise; 
 
@@ -80,10 +103,10 @@ namespace tk
     public: 
         Promise() : m_PState {std::make_shared<SharedState<T>>() }
         {}
-        template<typename R> 
-        void Set(R&& result)
+        template<typename... R> 
+        void Set(R&&... result) //This is a parameterpack so we can forward 0 things. 
         {
-            m_PState->Set(std::forward<R>(result)); 
+            m_PState->Set(std::forward<R>(result)...); 
         }
        
         Future<T> GetFuture()
@@ -144,7 +167,15 @@ namespace tk
                     ...arguments = std::forward<A>(arguments) //captures parameter pack
                 ]() mutable
             {
-                promise.Set(function(std::forward<A>(arguments)...));
+                if constexpr (std::is_void_v<std::invoke_result_t<F, A...>>)
+                {
+                    function(std::forward<A>(arguments)...); 
+                    promise.Set(); 
+                }
+                else
+                {
+                    promise.Set(function(std::forward<A>(arguments)...));
+                }
             };
         }
         std::function<void()> m_executor; 
@@ -161,13 +192,16 @@ namespace tk
                 m_workers.emplace_back(this); 
             }
         }
-        void Run(Task task)
+        template<typename F, typename...A> 
+        auto Run(F&& function, A&&... args)
         {
+            auto [task, future] = Task::Make(std::forward<F>(function), std::forward<A>(args)...); 
             {
                 std::lock_guard lk {m_taskQueueMtx};
                 m_tasks.push_back(std::move(task));
             } //We want to release the mutex before notifying the condition variable. 
             m_cv.notify_one(); 
+            return future; 
         }
 
         Task GetTask(std::stop_token& st)
@@ -252,7 +286,7 @@ int main(int argc, char** argv)
 {
     using namespace std::chrono_literals; 
 
-    /*
+    
     tk::ThreadPool pool(WORKER_COUNT); 
 
     const auto spitt = []
@@ -270,7 +304,7 @@ int main(int argc, char** argv)
     }
 
     pool.WaitForAllDone(); 
-    */
+    
 
     tk::Promise<int> promise; 
     auto futur = promise.GetFuture(); //Both ends of the transaction set. 
