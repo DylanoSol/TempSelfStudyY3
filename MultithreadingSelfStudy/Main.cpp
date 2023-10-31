@@ -12,6 +12,9 @@
 #include <sstream>
 #include <condition_variable>
 #include <deque>
+#include <optional>
+#include <semaphore>
+#include <cassert>
 #include "Timing.h"
 #include "Globals.h"
 #include "Task.h"
@@ -22,7 +25,80 @@
 
 namespace tk
 {
+    //Research templates
     using Task = std::function<void()>; 
+    template<typename T>
+    class SharedState
+    {
+    public: 
+        template<typename R> 
+        void Set(R&& result) //Promise
+        {
+            if (!m_result)
+            {
+                m_result = std::forward<R>(result); //Google what std::forward does. 
+                m_readySignal.release(); //Releases 1 count of the semaphore
+            }
+        }
+
+        T Get() //Future, should sleep until the promise is set. 
+        {
+            m_readySignal.acquire(); //Blocks unless the value has been already set. 
+            return std::move(*m_result); 
+        }
+    private: 
+        std::binary_semaphore m_readySignal{ 0 }; //0, so no resources available yet. 
+        std::optional<T> m_result; //Result of asynchronous operation. google what std::optional does.  
+    };
+
+    template<typename T> 
+    class Promise; 
+
+    template<typename T>
+    class Future
+    {
+        friend class Promise<T>; 
+    public:
+        T Get()
+        {
+            assert(!m_resultAcquired); 
+            m_resultAcquired = true; 
+            return m_PState->Get(); 
+        }
+
+    private:
+        Future(std::shared_ptr<SharedState<T>> pState) : m_PState{pState} //Can only be created by promise now
+        {}
+        std::shared_ptr<SharedState<T>> m_PState;
+        bool m_resultAcquired = false; 
+    };
+
+
+    template<typename T> 
+    class Promise
+    {
+    public: 
+        Promise() : m_PState {std::make_shared<SharedState<T>>() }
+        {}
+        template<typename R> 
+        void Set(R&& result)
+        {
+            m_PState->Set(std::forward<R>(result)); 
+        }
+       
+        Future<T> GetFuture()
+        {
+            assert(m_futureAvailable); 
+            m_futureAvailable = false; 
+            return { m_PState }; //Future thats constructed from PState. 
+        }
+
+    private: 
+        bool m_futureAvailable = true; 
+        std::shared_ptr<SharedState<T>> m_PState; 
+    };
+
+ 
 
 
     class ThreadPool
@@ -126,6 +202,8 @@ enum Datasets
 int main(int argc, char** argv)
 {
     using namespace std::chrono_literals; 
+
+    /*
     tk::ThreadPool pool(WORKER_COUNT); 
 
     const auto spitt = []
@@ -143,6 +221,18 @@ int main(int argc, char** argv)
     }
 
     pool.WaitForAllDone(); 
+    */
+
+    tk::Promise<int> promise; 
+    auto future = promise.GetFuture(); //Both ends of the transaction set. 
+
+    std::thread{ [](tk::Promise<int> p)
+        {
+            std::this_thread::sleep_for(2500ms);
+            p.Set(120);
+    }, std::move(promise) }.detach(); 
+
+    std::cout << future.Get() << std::endl; //Future blocks until it gets the value. 
 
     return 0; 
     /*
